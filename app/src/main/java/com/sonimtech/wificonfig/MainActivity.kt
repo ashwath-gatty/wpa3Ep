@@ -306,7 +306,7 @@ class MainActivity : AppCompatActivity() {
 
                 // For domain matching (recommended for security)
                 if (domainSuffixMatch.isNotEmpty()) {
-                    enterpriseConfig.altSubjectMatch = domainSuffixMatch
+                    altSubjectMatch = domainSuffixMatch // Corrected: Removed enterpriseConfig qualifier
                     Log.i(TAG, "Domain Suffix Match (altSubjectMatch) set to: '$domainSuffixMatch'")
                 } else {
                     Log.i(TAG, "Domain Suffix Match (altSubjectMatch) not provided.")
