@@ -32,6 +32,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var etSsid: EditText
     private lateinit var etIdentity: EditText
+    private lateinit var etAnonymousIdentity: EditText // Added for Anonymous Identity
+    private lateinit var etDomainSuffixMatch: EditText // Added for Domain Suffix Match
     private lateinit var btnPickCaCert: Button
     private lateinit var tvCaCertPath: TextView
     private lateinit var btnPickClientCert: Button
@@ -99,6 +101,8 @@ class MainActivity : AppCompatActivity() {
 
         etSsid = findViewById(R.id.etSsid)
         etIdentity = findViewById(R.id.etIdentity)
+        etAnonymousIdentity = findViewById(R.id.etAnonymousIdentity) // Added for Anonymous Identity
+        etDomainSuffixMatch = findViewById(R.id.etDomainSuffixMatch) // Added for Domain Suffix Match
         btnPickCaCert = findViewById(R.id.btnPickCaCert)
         tvCaCertPath = findViewById(R.id.tvCaCertPath)
         btnPickClientCert = findViewById(R.id.btnPickClientCert)
@@ -137,43 +141,64 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun parseX509Certificate(inputStream: InputStream): X509Certificate? {
+        Log.d(TAG, "Attempting to parse X.509 certificate.")
         return try {
             val certificateFactory = CertificateFactory.getInstance("X.509")
-            certificateFactory.generateCertificate(inputStream) as X509Certificate
+            val cert = certificateFactory.generateCertificate(inputStream) as X509Certificate
+            Log.i(TAG, "Successfully parsed X.509 certificate: Subject='${cert.subjectDN?.name}', Issuer='${cert.issuerDN?.name}', NotBefore='${cert.notBefore}', NotAfter='${cert.notAfter}'")
+            cert
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse X.509 certificate", e)
+            Log.e(TAG, "Failed to parse X.509 certificate: ${e.message}", e)
             null
         }
     }
 
     private fun loadClientPkcs12(uri: Uri, password: CharArray): Boolean {
-        return try {
+        Log.d(TAG, "Attempting to load PKCS12 client certificate from URI: $uri")
+        try {
             contentResolver.openInputStream(uri)?.use { inputStream ->
                 val keyStore = KeyStore.getInstance("PKCS12")
-                keyStore.load(inputStream, password)
+                keyStore.load(inputStream, password) // This can throw IOException for wrong password or corrupted file
+                // It's good practice to clear the password from memory after it's used.
+                password.fill(' ')
                 val aliases = keyStore.aliases()
                 if (aliases.hasMoreElements()) {
                     val alias = aliases.nextElement()
+                    Log.i(TAG, "Found alias in PKCS12 file: $alias")
                     clientPrivateKey = keyStore.getKey(alias, password) as? PrivateKey
-                    clientCertificate = keyStore.getCertificate(alias) as? X509Certificate
+                    val loadedCert = keyStore.getCertificate(alias) as? X509Certificate
 
-                    if (clientPrivateKey != null && clientCertificate != null) {
-                        Log.i(TAG, "Client PKCS12 loaded successfully. Alias: $alias")
+                    if (clientPrivateKey != null && loadedCert != null) {
+                        clientCertificate = loadedCert
+                        Log.i(TAG, "Successfully loaded client key and certificate from PKCS12. Alias: '$alias'. Certificate: Subject='${clientCertificate!!.subjectDN?.name}', Issuer='${clientCertificate!!.issuerDN?.name}', NotBefore='${clientCertificate!!.notBefore}', NotAfter='${clientCertificate!!.notAfter}'")
                         return true
                     } else {
-                        Log.e(TAG, "Failed to extract key/certificate from PKCS12. Alias: $alias")
-                        if (clientPrivateKey == null) Log.e(TAG, "Private key is null")
-                        if (clientCertificate == null) Log.e(TAG, "Client certificate is null") else TODO()
+                        Log.e(TAG, "Failed to extract key/certificate from PKCS12 for alias '$alias'. PrivateKey null: ${clientPrivateKey == null}, Certificate null: ${loadedCert == null}")
+                        if (clientPrivateKey == null) Log.d(TAG, "Private key was null after extraction attempt.")
+                        if (loadedCert == null) Log.d(TAG, "Client certificate (loadedCert) was null after extraction attempt from alias '$alias'.")
+                        tvStatus.text = "Error: Could not extract key/cert from P12. Check file content."
+                        return false
                     }
                 } else {
-                    Log.e(TAG, "No aliases found in PKCS12 keystore.")
+                    Log.e(TAG, "No aliases found in PKCS12 keystore. File might be empty or not a valid PKCS12.")
+                    tvStatus.text = "Error: No aliases found in P12 file."
+                    return false
                 }
+            } ?: run {
+                Log.e(TAG, "Failed to open input stream for client certificate URI: $uri")
+                tvStatus.text = "Error: Could not open client cert file."
+                return false
             }
-            false
+        } catch (e: java.io.IOException) {
+            Log.e(TAG, "Error loading PKCS12 client certificate - Possible password issue or corrupted file: ${e.message}", e)
+            password.fill(' ') // Clear password on exception
+            tvStatus.text = "Error: Keystore password incorrect or file corrupted."
+            return false
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading PKCS12 client certificate", e)
+            Log.e(TAG, "Generic error loading PKCS12 client certificate: ${e.message}", e)
+            password.fill(' ') // Clear password on exception
             tvStatus.text = "Error loading client cert: ${e.message}"
-            false
+            return false
         }
     }
 
@@ -182,33 +207,41 @@ class MainActivity : AppCompatActivity() {
     private fun configureWifi() {
         val ssid = etSsid.text.toString().trim()
         val identity = etIdentity.text.toString().trim()
+        val anonymousIdentity = etAnonymousIdentity.text.toString().trim() // Read Anonymous Identity
+        val domainSuffixMatch = etDomainSuffixMatch.text.toString().trim() // Read Domain Suffix Match
         val clientCertPass = etClientCertPassword.text.toString() // DO NOT log this in production
+        Log.i(TAG, "Attempting to configure Wi-Fi. SSID: '$ssid', Identity: '$identity', AnonymousIdentity: '${anonymousIdentity.ifEmpty { "N/A" }}', DomainSuffixMatch: '${domainSuffixMatch.ifEmpty { "N/A" }}'")
 
         if (ssid.isEmpty()) {
             tvStatus.text = "SSID cannot be empty."
+            Log.w(TAG, "Configuration failed: SSID is empty.")
             return
         }
         if (identity.isEmpty()) {
             tvStatus.text = "Identity cannot be empty."
+            Log.w(TAG, "Configuration failed: Identity is empty.")
             return
         }
         if (caCertificate == null) {
-            tvStatus.text = "CA Certificate not loaded."
+            tvStatus.text = "CA Certificate not loaded. Please pick a CA certificate."
+            Log.w(TAG, "Configuration failed: CA certificate is null.")
             return
         }
         if (clientCertUri == null) {
-            tvStatus.text = "Client Certificate (.pfx) not selected."
+            tvStatus.text = "Client Certificate P12 (.pfx/.p12) not selected. Please pick one."
+            Log.w(TAG, "Configuration failed: Client certificate URI is null.")
             return
         }
         if (clientCertPass.isEmpty()) {
-            // In a real app, prompt more securely or handle this better
             tvStatus.text = "Client Certificate password cannot be empty."
+            Log.w(TAG, "Configuration failed: Client certificate password is empty.")
             return
         }
 
         // Load client certificate and private key
         if (!loadClientPkcs12(clientCertUri!!, clientCertPass.toCharArray())) {
-            tvStatus.text = "Failed to load client certificate. Check password or file."
+            // tvStatus is set by loadClientPkcs12 on failure
+            Log.w(TAG, "Configuration failed: Could not load client PKCS12.")
             // Clear sensitive data attempt
             clientPrivateKey = null
             clientCertificate = null
@@ -220,16 +253,21 @@ class MainActivity : AppCompatActivity() {
 
 
         if (clientPrivateKey == null || clientCertificate == null) {
-            tvStatus.text = "Client private key or certificate is missing after load attempt."
+            tvStatus.text = "Client private key or certificate could not be extracted. Check P12 file and password."
+            Log.w(TAG, "Configuration failed: Client private key or certificate is null after load attempt.")
             return
         }
+
+        Log.i(TAG, "CA Certificate loaded: Subject='${caCertificate?.subjectDN?.name}'")
+        Log.i(TAG, "Client Certificate loaded: Subject='${clientCertificate?.subjectDN?.name}'")
+        Log.i(TAG, "Client Private Key loaded: Algorithm='${clientPrivateKey?.algorithm}'")
 
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
             if (!wifiManager.isWifiEnabled) {
-                // Prompt user to enable Wi-Fi
+                Log.w(TAG, "Wi-Fi is disabled. Prompting user.")
                 AlertDialog.Builder(this)
                     .setTitle("Enable Wi-Fi")
                     .setMessage("Wi-Fi is currently disabled. Please enable it to add this network.")
@@ -243,23 +281,36 @@ class MainActivity : AppCompatActivity() {
             }
 
             val enterpriseConfig = WifiEnterpriseConfig().apply {
-                eapMethod = WifiEnterpriseConfig.Eap.TLS // EAP-TLS
+                eapMethod = WifiEnterpriseConfig.Eap.TLS
+                Log.i(TAG, "Setting EAP method to TLS (value: ${WifiEnterpriseConfig.Eap.TLS})")
                 this.identity = identity
-                // Anonymous identity can be set if required by the network
-                // anonymousIdentity = "anonymous@example.com"
+                Log.i(TAG, "Identity set to: '$identity'")
+
+                if (anonymousIdentity.isNotEmpty()) {
+                    this.anonymousIdentity = anonymousIdentity
+                    Log.i(TAG, "Anonymous Identity set to: '$anonymousIdentity'")
+                } else {
+                    Log.i(TAG, "Anonymous Identity not provided.")
+                }
 
                 // Set CA certificate
-                // For multiple CAs, you might need to bundle them or use system trust store if applicable
                 setCaCertificate(this@MainActivity.caCertificate)
+                Log.i(TAG, "CA certificate set in WifiEnterpriseConfig.")
 
                 // Set Client Key and Certificate
-                // IMPORTANT: This handles the private key. Ensure it's done securely.
                 setClientKeyEntryWithCertificateChain(
                     this@MainActivity.clientPrivateKey,
-                    arrayOf(this@MainActivity.clientCertificate) // Chain might include intermediate CAs
+                    arrayOf(this@MainActivity.clientCertificate)
                 )
+                Log.i(TAG, "Client key and certificate set in WifiEnterpriseConfig.")
+
                 // For domain matching (recommended for security)
-                // altSubjectMatch = "DNS:yourserver.example.com" // Replace with your server's domain
+                if (domainSuffixMatch.isNotEmpty()) {
+                    enterpriseConfig.altSubjectMatch = domainSuffixMatch
+                    Log.i(TAG, "Domain Suffix Match (altSubjectMatch) set to: '$domainSuffixMatch'")
+                } else {
+                    Log.i(TAG, "Domain Suffix Match (altSubjectMatch) not provided.")
+                }
             }
 
             val suggestion = WifiNetworkSuggestion.Builder()
@@ -270,12 +321,12 @@ class MainActivity : AppCompatActivity() {
 
             val suggestions = listOf(suggestion)
             val status = wifiManager.addNetworkSuggestions(suggestions)
+            val statusText = getNetworkSuggestionStatusText(status)
 
             when (status) {
                 WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS -> {
                     tvStatus.text = "Wi-Fi suggestion for '$ssid' added successfully! Check Wi-Fi settings."
-                    Log.i(TAG, "Network suggestion added for $ssid")
-                    // Prompt user to connect or check Wi-Fi settings
+                    Log.i(TAG, "Network suggestion added for '$ssid'. Status: $statusText ($status)")
                     AlertDialog.Builder(this)
                         .setTitle("Network Suggested")
                         .setMessage("The Wi-Fi network '$ssid' has been suggested to the system. You may need to select it from your Wi-Fi list or it might connect automatically if it's the best option.")
@@ -285,29 +336,9 @@ class MainActivity : AppCompatActivity() {
                         .setNegativeButton("OK", null)
                         .show()
                 }
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_ADD_DUPLICATE -> {
-                    tvStatus.text = "Error: Suggestion for '$ssid' already exists."
-                    Log.w(TAG, "Duplicate network suggestion for $ssid")
-                }
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_ADD_EXCEEDS_MAX_PER_APP -> {
-                    tvStatus.text = "Error: Exceeded max suggestions per app."
-                    Log.w(TAG, "Exceeded max suggestions")
-                }
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_APP_DISALLOWED -> {
-                    tvStatus.text = "Error: App is disallowed from making suggestions. Check app permissions or restrictions."
-                    Log.e(TAG, "App disallowed from making suggestions")
-                }
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_INTERNAL -> {
-                    tvStatus.text = "Error: Internal error adding suggestion for '$ssid'."
-                    Log.e(TAG, "Internal error adding suggestion for $ssid")
-                }
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_REMOVE_INVALID -> {
-                    tvStatus.text = "Error: Invalid suggestion to remove (should not happen here)."
-                    Log.e(TAG, "Error remove invalid (unexpected).")
-                }
                 else -> {
-                    tvStatus.text = "Failed to add Wi-Fi suggestion for '$ssid'. Status code: $status"
-                    Log.e(TAG, "Failed to add network suggestion for $ssid, status: $status")
+                    tvStatus.text = "Failed to add Wi-Fi suggestion for '$ssid'. Status: $statusText ($status)"
+                    Log.e(TAG, "Failed to add network suggestion for '$ssid'. Status: $statusText ($status)")
                 }
             }
         } else {
@@ -317,5 +348,18 @@ class MainActivity : AppCompatActivity() {
         // Clear sensitive data after configuration attempt
         clientPrivateKey = null
         // clientCertificate is fine to keep if needed for display, but private key is critical
+    }
+
+    private fun getNetworkSuggestionStatusText(status: Int): String {
+        return when (status) {
+            WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS -> "SUCCESS"
+            WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_ADD_DUPLICATE -> "ERROR_ADD_DUPLICATE"
+            WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_ADD_EXCEEDS_MAX_PER_APP -> "ERROR_ADD_EXCEEDS_MAX_PER_APP"
+            WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_APP_DISALLOWED -> "ERROR_APP_DISALLOWED"
+            WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_INTERNAL -> "ERROR_INTERNAL"
+            WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_REMOVE_INVALID -> "ERROR_REMOVE_INVALID"
+            // Add any other specific codes if new ones are introduced in future Android versions
+            else -> "UNKNOWN_STATUS_CODE"
+        }
     }
 }
