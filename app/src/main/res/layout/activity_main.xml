@@ -55,6 +55,32 @@
                 android:inputType="text"/>
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!-- New fields START -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etAnonymousIdentity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Anonymous Identity (Optional)"
+                android:inputType="text"/>
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etDomainSuffixMatch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Domain Suffix Match (Optional)"
+                android:inputType="text"/>
+        </com.google.android.material.textfield.TextInputLayout>
+        <!-- New fields END -->
+
         <Button
             android:id="@+id/btnPickCaCert"
             android:layout_width="match_parent"
