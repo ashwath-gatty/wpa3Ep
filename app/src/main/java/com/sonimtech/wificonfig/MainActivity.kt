@@ -2,6 +2,8 @@ package com.sonimtech.wificonfig
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -11,7 +13,6 @@ import android.net.wifi.WifiNetworkSuggestion
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.security.keystore.KeyProperties
 import android.util.Log
 import android.widget.Button
 import android.widget.EditText
@@ -20,11 +21,12 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import com.sonimtech.wificonfig.R
-import java.io.ByteArrayOutputStream
+import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.cert.Certificate
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
@@ -48,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private var caCertificate: X509Certificate? = null
     private var clientCertificate: X509Certificate? = null
     private var clientPrivateKey: PrivateKey? = null
+    private var dpm: DevicePolicyManager? = null
+    private var adminComponent: ComponentName? = null
 
     companion object {
         private const val TAG = "WifiConfigurator"
@@ -111,6 +115,9 @@ class MainActivity : AppCompatActivity() {
         btnConfigureWifi = findViewById(R.id.btnConfigureWifi)
         tvStatus = findViewById(R.id.tvStatus)
 
+        dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        adminComponent = ComponentName(this, MyDeviceAdminReceiver::class.java)
+
         btnPickCaCert.setOnClickListener {
             openFilePicker(arrayOf("application/x-x509-ca-cert", "application/pkix-cert", "text/plain"), pickCaCertLauncher)
         }
@@ -151,6 +158,53 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Failed to parse X.509 certificate: ${e.message}", e)
             null
         }
+    }
+
+    private fun installClientCertificate() {
+        /* For installing client key/cert pair (as a DO/PO) */
+        val installKeyPair =
+            dpm?.installKeyPair(adminComponent, clientPrivateKey as PrivateKey, clientCertificate as Certificate, "alias");
+
+        Log.e(TAG, " installClientCertificate === installKeyPair =="+installKeyPair )
+
+    }
+    private fun installCaCertificate(uri: Uri, password: CharArray): Boolean? {
+        var installed: Boolean? = false
+
+        runCatching {
+            try {
+                contentResolver.openInputStream(uri)?.use { inputStream ->
+                    var caCertificateForDPM = parseX509Certificate(inputStream)
+                    if (caCertificateForDPM != null) {
+                        var caCertBytes = caCertificateForDPM.encoded
+                        installed = dpm?.installCaCert(adminComponent, caCertBytes)
+                    };
+
+                    if (caCertificateForDPM != null) {
+                        Log.i(TAG, "CA Certificate loaded successfully.")
+                        Toast.makeText(this, "CA Certificate loaded", Toast.LENGTH_SHORT).show()
+                    } else {
+                        throw Exception("Failed to parse CA certificate")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading CA certificate", e)
+                tvStatus.text = "Error loading CA cert: ${e.message}"
+                caCertUri = null
+                caCertificate = null
+                tvCaCertPath.text = "No CA certificate selected"
+            }
+
+            Toast.makeText(
+                this,
+                if (installed == true) "CA certificate installed!" else "Certificate install failed",
+                Toast.LENGTH_LONG
+            ).show()
+        }.onFailure { e ->
+            e.printStackTrace()
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+        return installed
     }
 
     private fun loadClientPkcs12(uri: Uri, password: CharArray): Boolean {
@@ -249,6 +303,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
         // Clear password from EditText after attempting to load
+
+        if (dpm?.isDeviceOwnerApp(packageName)!!) {
+            installCaCertificate(caCertUri!!, clientCertPass.toCharArray())
+            installClientCertificate()
+
+        } else {
+            Toast.makeText(this, "App is not Device Owner!", Toast.LENGTH_LONG).show()
+        }
         etClientCertPassword.text.clear()
 
 
