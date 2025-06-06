@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiEnterpriseConfig
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSuggestion
@@ -21,8 +22,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import java.io.BufferedInputStream
-import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.security.KeyStore
 import java.security.PrivateKey
@@ -342,7 +341,7 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            val enterpriseConfig = WifiEnterpriseConfig().apply {
+            var enterpriseCfg = WifiEnterpriseConfig().apply {
                 eapMethod = WifiEnterpriseConfig.Eap.TLS
                 Log.i(TAG, "Setting EAP method to TLS (value: ${WifiEnterpriseConfig.Eap.TLS})")
                 this.identity = identity
@@ -375,34 +374,45 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val suggestion = WifiNetworkSuggestion.Builder()
-                .setSsid(ssid)
-                .setWpa3EnterpriseConfig(enterpriseConfig)
-                .setIsAppInteractionRequired(true) // User interaction may be needed to connect
-                .build()
+//            val suggestion = WifiNetworkSuggestion.Builder()
+//                .setSsid(ssid)
+//                .setWpa3EnterpriseConfig(enterpriseConfig)
+//                .setIsAppInteractionRequired(true) // User interaction may be needed to connect
+//                .build()
 
-            val suggestions = listOf(suggestion)
-            val status = wifiManager.addNetworkSuggestions(suggestions)
-            val statusText = getNetworkSuggestionStatusText(status)
 
-            when (status) {
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS -> {
-                    tvStatus.text = "Wi-Fi suggestion for '$ssid' added successfully! Check Wi-Fi settings."
-                    Log.i(TAG, "Network suggestion added for '$ssid'. Status: $statusText ($status)")
-                    AlertDialog.Builder(this)
-                        .setTitle("Network Suggested")
-                        .setMessage("The Wi-Fi network '$ssid' has been suggested to the system. You may need to select it from your Wi-Fi list or it might connect automatically if it's the best option.")
-                        .setPositiveButton("Open Wi-Fi Settings") { _, _ ->
-                            startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-                        }
-                        .setNegativeButton("OK", null)
-                        .show()
-                }
-                else -> {
-                    tvStatus.text = "Failed to add Wi-Fi suggestion for '$ssid'. Status: $statusText ($status)"
-                    Log.e(TAG, "Failed to add network suggestion for '$ssid'. Status: $statusText ($status)")
-                }
+            val wifiConfig = WifiConfiguration().apply {
+                SSID = "\"$ssid\""
+                enterpriseConfig = enterpriseCfg
+                allowedKeyManagement.set(WifiConfiguration.SECURITY_TYPE_EAP_WPA3_ENTERPRISE)
+                //allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_EAP);//SECURITY_TYPE_EAP_WPA3_ENTERPRISE_192_BIT)
+                //allowedKeyManagement.set(WifiConfiguration.KeyMgmt.SUITE_B_192);//SECURITY_TYPE_EAP_WPA3_ENTERPRISE_192_BIT)
             }
+            val netId = wifiManager.addNetwork(wifiConfig)
+            Log.e(TAG, "  Wifi Network Added . netID == "+netId)
+
+//            val suggestions = listOf(suggestion)
+//            val status = wifiManager.addNetworkSuggestions(suggestions)
+//            val statusText = getNetworkSuggestionStatusText(status)
+//
+//            when (status) {
+//                WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS -> {
+//                    tvStatus.text = "Wi-Fi suggestion for '$ssid' added successfully! Check Wi-Fi settings."
+//                    Log.i(TAG, "Network suggestion added for '$ssid'. Status: $statusText ($status)")
+//                    AlertDialog.Builder(this)
+//                        .setTitle("Network Suggested")
+//                        .setMessage("The Wi-Fi network '$ssid' has been suggested to the system. You may need to select it from your Wi-Fi list or it might connect automatically if it's the best option.")
+//                        .setPositiveButton("Open Wi-Fi Settings") { _, _ ->
+//                            startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+//                        }
+//                        .setNegativeButton("OK", null)
+//                        .show()
+//                }
+//                else -> {
+//                    tvStatus.text = "Failed to add Wi-Fi suggestion for '$ssid'. Status: $statusText ($status)"
+//                    Log.e(TAG, "Failed to add network suggestion for '$ssid'. Status: $statusText ($status)")
+//                }
+//            }
         } else {
             tvStatus.text = "This feature requires Android Q (API 29) or higher."
             Log.w(TAG, "API level too low for WifiNetworkSuggestion.")
